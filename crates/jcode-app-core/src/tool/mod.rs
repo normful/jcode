@@ -37,6 +37,7 @@ pub mod mcp;
 mod memory;
 mod open;
 mod panel;
+mod parallel;
 mod patch;
 mod read;
 mod replace;

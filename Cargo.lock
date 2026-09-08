@@ -3442,7 +3442,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "url",
- "urlencoding",
  "uuid",
  "windows-sys 0.59.0",
 ]

@@ -5,14 +5,14 @@
 
 pub use jcode_config_types::{
     AgentsConfig, AmbientConfig, AuthConfig, AutoJudgeConfig, AutoReviewConfig, CompactionConfig,
-    CompactionMode, CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod,
-    DiagramDisplayMode, DiagramPanePosition, DiffDisplayMode, DisplayConfig, FeatureConfig,
-    GatewayConfig, HookCommands, HooksConfig, KeybindingsConfig, LatexRenderingMode,
-    LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode, MenubarConfig, NamedProviderAuth,
-    NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, NativeScrollbarConfig,
-    NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SessionPickerResumeAction, SponsorsConfig, SwarmSpawnMode, SwarmStripLayout, TerminalConfig,
-    UpdateChannel, WebSearchConfig, WebSearchEngine,
+    CompactionMode, CrossProviderFailoverMode, DiagramDisplayMode, DiagramPanePosition,
+    DiffDisplayMode, DisplayConfig, FeatureConfig, GatewayConfig, HookCommands, HooksConfig,
+    KeybindingsConfig, LatexRenderingMode, LaunchHotkeyEntry, LaunchHotkeysConfig,
+    MarkdownSpacingMode, MenubarConfig, NamedProviderAuth, NamedProviderConfig,
+    NamedProviderModelConfig, NamedProviderType, NativeScrollbarConfig, NotificationsConfig,
+    PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig, SessionPickerResumeAction,
+    SponsorsConfig, SwarmSpawnMode, SwarmStripLayout, TerminalConfig, UpdateChannel,
+    WebSearchConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -29,45 +29,52 @@ const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
 
 #[cfg(test)]
 #[test]
-fn custom_websearch_config_toml_roundtrip() {
+fn websearch_native_config_toml_roundtrip() {
     let input = r#"
-engine = "custom"
 prefer_native = false
-fallback_engines = []
-[custom]
-endpoint = "https://search.example.test/api"
-method = "POST"
-query_param = "search"
-count_param = "limit"
-params = { format = "json" }
-body = { options = { safe = true } }
-headers = { Accept = "application/json" }
-header_env = { Authorization = "SEARCH_AUTH" }
-results_pointer = "/data/hits"
-title_pointer = "/name"
-url_pointer = "/link"
-snippet_pointer = "/summary"
+native_max_uses = 3
+native_allowed_domains = ["docs.rs"]
+native_anthropic_tool_version = "web_search_20260209"
 "#;
     let config: WebSearchConfig = toml::from_str(input).unwrap();
-    assert_eq!(config.engine, WebSearchEngine::Custom);
     assert!(!config.native_enabled());
-    assert_eq!(
-        WebSearchEngine::parse("custom"),
-        Some(WebSearchEngine::Custom)
-    );
-    assert!(WebSearchEngine::Custom.is_local());
-    assert_eq!(WebSearchEngine::Custom.as_str(), "custom");
+    assert_eq!(config.native_max_uses, Some(3));
+    assert_eq!(config.native_allowed_domains, vec!["docs.rs".to_string()]);
+    assert_eq!(config.native_anthropic_tool_version, "web_search_20260209");
     let encoded = toml::to_string(&config).unwrap();
     let decoded: WebSearchConfig = toml::from_str(&encoded).unwrap();
     assert_eq!(
         serde_json::to_value(config).unwrap(),
         serde_json::to_value(decoded).unwrap()
     );
-    let no_count: CustomWebSearchConfig =
-        toml::from_str("endpoint = 'https://example.test'").unwrap();
-    assert!(no_count.count_param.is_none());
-    assert_eq!(no_count.method, CustomWebSearchMethod::Get);
-    assert!(WebSearchConfig::default().custom.is_none());
+}
+
+/// The Parallel migration deleted `[websearch]`'s scraping-engine knobs, but
+/// every config file jcode ever wrote contains them (`engine = "duckduckgo"`,
+/// `fallback_engines = ["bing"]`, ...). `Config` does not set
+/// `deny_unknown_fields`, so those keys must keep parsing and simply be
+/// ignored rather than failing the whole file.
+#[cfg(test)]
+#[test]
+fn legacy_websearch_engine_keys_are_ignored_not_rejected() {
+    let legacy: WebSearchConfig = toml::from_str(
+        r#"
+engine = "duckduckgo"
+fallback_engines = ["bing"]
+bing_market = "en-US"
+searxng_url = "https://searx.example.org"
+
+[custom]
+endpoint = "https://search.example.test/api"
+results_pointer = "/data/hits"
+"#,
+    )
+    .unwrap();
+    assert!(legacy.native_enabled());
+    assert_eq!(
+        legacy.native_max_uses,
+        Some(jcode_config_types::DEFAULT_NATIVE_WEB_SEARCH_MAX_USES)
+    );
 }
 
 const CONFIG_ENV_KEYS: &[&str] = &[
@@ -96,10 +103,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_AUTO_POKE",
     "JCODE_AUTO_SERVER_RELOAD",
     "JCODE_CHECK_UPDATES",
-    "JCODE_BING_API_KEY",
     "JCODE_BLOCK_LID_CLOSE",
-    "JCODE_BING_API_KEY_ENV",
-    "JCODE_BING_MARKET",
     "JCODE_CENTERED_TOGGLE_KEY",
     "JCODE_CHAT_NATIVE_SCROLLBAR",
     "JCODE_COMPACT_NOTIFICATIONS",
@@ -213,7 +217,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_SCROLL_PROMPT_UP_KEY",
     "JCODE_SCROLL_UP_FALLBACK_KEY",
     "JCODE_SCROLL_UP_KEY",
-    "JCODE_SEARXNG_URL",
     "JCODE_SHOW_AGENTGREP_OUTPUT",
     "JCODE_SHOW_BASH_OUTPUT",
     "JCODE_SHOW_DIFFS",
@@ -246,8 +249,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_TYPING_SCROLL_LOCK_TOGGLE_KEY",
     "JCODE_UPDATE_CHANNEL",
     "JCODE_VOICE_INPUT_KEY",
-    "JCODE_WEBSEARCH_ENGINE",
-    "JCODE_WEBSEARCH_FALLBACK_ENGINES",
     "JCODE_WEBSEARCH_NATIVE_ALLOWED_DOMAINS",
     "JCODE_WEBSEARCH_NATIVE_BLOCKED_DOMAINS",
     "JCODE_WEBSEARCH_NATIVE_MAX_USES",
@@ -551,9 +552,6 @@ pub struct Config {
 
     /// Feature toggles
     pub features: FeatureConfig,
-
-    /// Web search tool configuration
-    pub websearch: WebSearchConfig,
 
     /// Built-in tool exposure configuration
     pub tools: ToolConfig,
