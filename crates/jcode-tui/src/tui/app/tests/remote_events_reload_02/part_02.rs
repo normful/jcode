@@ -381,7 +381,7 @@ fn test_tool_done_preserves_sibling_streaming_tool_inputs_and_intents() {
     );
     app.handle_server_event(
         crate::protocol::ServerEvent::ToolInput {
-            delta: r#"{"url":"https://example.com/a","intent":"Fetch page A"}"#.to_string(),
+            delta: r#"{"urls":["https://example.com/a"],"intent":"Fetch page A"}"#.to_string(),
         },
         &mut remote,
     );
@@ -403,7 +403,7 @@ fn test_tool_done_preserves_sibling_streaming_tool_inputs_and_intents() {
     );
     app.handle_server_event(
         crate::protocol::ServerEvent::ToolInput {
-            delta: r#"{"url":"https://example.com/b","intent":"Fetch page B"}"#.to_string(),
+            delta: r#"{"urls":["https://example.com/b"],"intent":"Fetch page B"}"#.to_string(),
         },
         &mut remote,
     );
@@ -431,8 +431,8 @@ fn test_tool_done_preserves_sibling_streaming_tool_inputs_and_intents() {
     assert_eq!(remaining[0].id, "tool_b");
     assert_eq!(remaining[0].intent.as_deref(), Some("Fetch page B"));
     assert_eq!(
-        remaining[0].input.get("url").and_then(|v| v.as_str()),
-        Some("https://example.com/b")
+        remaining[0].input.get("urls"),
+        Some(&serde_json::json!(["https://example.com/b"]))
     );
 
     // Second result arrives and its display message keeps the intent/url.
@@ -460,7 +460,7 @@ fn test_tool_done_preserves_sibling_streaming_tool_inputs_and_intents() {
     let tool_b = tool_b_msg.tool_data.as_ref().unwrap();
     assert_eq!(tool_b.intent.as_deref(), Some("Fetch page B"));
     assert_eq!(
-        tool_b.input.get("url").and_then(|v| v.as_str()),
-        Some("https://example.com/b")
+        tool_b.input.get("urls"),
+        Some(&serde_json::json!(["https://example.com/b"]))
     );
 }

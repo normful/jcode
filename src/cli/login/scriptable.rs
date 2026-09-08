@@ -862,6 +862,9 @@ pub(super) fn resolve_auth_input(value: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+// Emitting the prompt needs every field of the pending login inline; bundling
+// them into a struct would just move the arity without helping callers.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_scriptable_auth_prompt(
     provider: &str,
     auth_url: &str,

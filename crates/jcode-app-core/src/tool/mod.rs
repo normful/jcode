@@ -25,6 +25,7 @@ pub mod mcp;
 mod memory;
 mod multiedit;
 mod open;
+mod parallel;
 mod patch;
 mod read;
 pub mod selfdev;

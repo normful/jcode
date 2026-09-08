@@ -128,12 +128,15 @@ impl InlineTailBuffer {
 fn tool_marker_summary(name: &str, input: &serde_json::Value) -> String {
     let raw = jcode_message_types::ToolCall::intent_from_input(input)
         .or_else(|| {
+            if name == "webfetch" {
+                return summarize_marker_urls(input);
+            }
             let field = match name {
                 "bash" => "command",
                 "read" | "write" => "file_path",
                 "edit" | "multiedit" => "file_path",
-                "agentgrep" | "websearch" => "query",
-                "webfetch" => "url",
+                "agentgrep" => "query",
+                "websearch" => "objective",
                 "task" | "subagent" => "description",
                 _ => return None,
             };
@@ -151,6 +154,55 @@ fn tool_marker_summary(name: &str, input: &serde_json::Value) -> String {
     } else {
         flat
     }
+}
+
+/// Multi-url host summary for webfetch markers. Duplicates the tiny TUI rule
+/// rather than reaching into TUI code (app-core must not depend on the TUI
+/// crate). Multi-url strings match the TUI exactly; the single-url case keeps
+/// MAX_SUMMARY_CHARS truncation (60 chars vs the TUI's 50) via the shared
+/// tail below.
+fn summarize_marker_urls(input: &serde_json::Value) -> Option<String> {
+    use unicode_width::UnicodeWidthStr;
+    let urls: Vec<&str> = input
+        .get("urls")
+        .and_then(|v| v.as_array())
+        .map(|urls| urls.iter().filter_map(|v| v.as_str()).collect())?;
+    if urls.is_empty() {
+        return None;
+    }
+    if urls.len() == 1 {
+        return Some(urls[0].to_string());
+    }
+    let hosts: Vec<String> = urls
+        .iter()
+        .take(3)
+        .map(|url| {
+            let host = url
+                .split_once("://")
+                .map(|(_, rest)| rest.split('/').next().unwrap_or(rest))
+                .unwrap_or(url);
+            if UnicodeWidthStr::width(host) <= 16 {
+                host.to_string()
+            } else {
+                let mut out: String = host
+                    .chars()
+                    .scan(0, |width, ch| {
+                        *width += UnicodeWidthStr::width(ch.to_string().as_str());
+                        Some((*width, ch))
+                    })
+                    .take_while(|(width, _)| *width < 16)
+                    .map(|(_, ch)| ch)
+                    .collect();
+                out.push('…');
+                out
+            }
+        })
+        .collect();
+    let mut summary = hosts.join(", ");
+    if urls.len() > 3 {
+        summary.push_str(&format!(" + {} more", urls.len() - 3));
+    }
+    Some(summary)
 }
 
 /// "3s" / "2m10s" style duration for tool markers.
@@ -227,6 +279,62 @@ mod tests {
             &serde_json::json!({"command": "x", "intent": "run the ui tests"}),
         );
         assert!(tail.render().contains("⚙ bash · run the ui tests"));
+    }
+
+    #[test]
+    fn marker_shows_websearch_objective_without_intent() {
+        let mut tail = InlineTailBuffer::default();
+        tail.start_tool(
+            "websearch",
+            &serde_json::json!({
+                "objective": "rust async runtimes",
+                "search_queries": ["rust async"]
+            }),
+        );
+        assert!(
+            tail.render().contains("⚙ websearch · rust async runtimes"),
+            "{}",
+            tail.render()
+        );
+    }
+
+    #[test]
+    fn marker_shows_webfetch_multi_url_host_summary() {
+        let mut tail = InlineTailBuffer::default();
+        tail.start_tool(
+            "webfetch",
+            &serde_json::json!({
+                "urls": [
+                    "https://example.com/a",
+                    "https://example.org/b",
+                    "https://foo.bar/baz/qux",
+                    "https://qux.io/x"
+                ]
+            }),
+        );
+        // Identical string to the TUI multi-url summary (short inputs dodge the
+        // 50-vs-60 single-url truncation difference by design).
+        assert!(
+            tail.render()
+                .contains("⚙ webfetch · example.com, example.org, foo.bar + 1 more"),
+            "{}",
+            tail.render()
+        );
+    }
+
+    #[test]
+    fn marker_shows_single_webfetch_url_truncated() {
+        let mut tail = InlineTailBuffer::default();
+        tail.start_tool(
+            "webfetch",
+            &serde_json::json!({"urls": ["https://example.com/docs/api/reference"]}),
+        );
+        assert!(
+            tail.render()
+                .contains("⚙ webfetch · https://example.com/docs/api/reference"),
+            "{}",
+            tail.render()
+        );
     }
 
     #[test]

@@ -825,6 +825,28 @@ fn truncate_url_display(url: &str, max_width: usize) -> String {
     truncate_middle_display(url, max_width)
 }
 
+fn summarize_urls(urls: &[String], max_width: usize) -> String {
+    if urls.len() == 1 {
+        return truncate_url_display(&urls[0], max_width);
+    }
+    let hosts: Vec<String> = urls
+        .iter()
+        .take(3)
+        .map(|url| {
+            let host = url
+                .split_once("://")
+                .map(|(_, rest)| rest.split('/').next().unwrap_or(rest))
+                .unwrap_or(url.as_str());
+            truncate_end_display(host, 16)
+        })
+        .collect();
+    let mut summary = hosts.join(", ");
+    if urls.len() > 3 {
+        summary.push_str(&format!(" + {} more", urls.len() - 3));
+    }
+    summary
+}
+
 fn truncate_identifier_display(value: &str, max_width: usize) -> String {
     truncate_middle_display(value, max_width)
 }
@@ -1124,14 +1146,35 @@ pub(super) fn get_tool_summary_with_budget(
             .unwrap_or_default(),
         "webfetch" => tool
             .input
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(|u| truncate_url_display(u, bounded(50)))
+            .get("urls")
+            .and_then(|v| v.as_array())
+            .map(|urls| {
+                let urls: Vec<String> = urls
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                if urls.is_empty() {
+                    String::new()
+                } else {
+                    summarize_urls(&urls, bounded(50))
+                }
+            })
             .unwrap_or_default(),
         "websearch" => tool
             .input
-            .get("query")
+            .get("objective")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                tool.input
+                    .get("search_queries")
+                    .and_then(|v| v.as_array())
+                    .and_then(|queries| {
+                        queries.iter().filter_map(|v| v.as_str()).find(|s| {
+                            !s.trim().is_empty()
+                        })
+                    })
+            })
             .map(|q| {
                 format!(
                     "'{}'",

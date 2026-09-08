@@ -1038,12 +1038,25 @@ fn test_common_tool_summaries_keep_full_text_when_row_budget_fits() {
                 id: "webfetch-wide".to_string(),
                 name: "webfetch".to_string(),
                 input: serde_json::json!({
-                    "url": "https://example.com/docs/api/reference"
+                    "urls": ["https://example.com/docs/api/reference"]
                 }),
                 intent: None,
                 thought_signature: None,
             },
             "https://example.com/docs/api/reference",
+        ),
+        (
+            ToolCall {
+                id: "websearch-wide".to_string(),
+                name: "websearch".to_string(),
+                input: serde_json::json!({
+                    "objective": "rust async await",
+                    "search_queries": ["rust async await", "rust tokio tutorial"]
+                }),
+                intent: None,
+                thought_signature: None,
+            },
+            "'rust async await'",
         ),
         (
             ToolCall {
@@ -1102,6 +1115,85 @@ fn test_common_tool_summaries_keep_full_text_when_row_budget_fits() {
         assert_eq!(summary, expected, "tool={tool:?} summary={summary:?}");
         assert!(!summary.contains('…'), "tool={tool:?} summary={summary:?}");
     }
+}
+
+#[test]
+fn test_web_tool_summaries_use_new_input_shapes() {
+    let multi = ToolCall {
+        id: "webfetch-multi".to_string(),
+        name: "webfetch".to_string(),
+        input: serde_json::json!({
+            "urls": [
+                "https://example.com/a",
+                "https://example.org/b",
+                "https://foo.bar/baz/qux",
+                "https://qux.io/x"
+            ]
+        }),
+        intent: None,
+        thought_signature: None,
+    };
+    assert_eq!(
+        tools_ui::get_tool_summary_with_budget(&multi, 50, Some(200)),
+        "example.com, example.org, foo.bar + 1 more"
+    );
+
+    let single = ToolCall {
+        id: "webfetch-single".to_string(),
+        name: "webfetch".to_string(),
+        input: serde_json::json!({
+            "urls": ["https://example.com/docs/api/reference"]
+        }),
+        intent: None,
+        thought_signature: None,
+    };
+    assert_eq!(
+        tools_ui::get_tool_summary_with_budget(&single, 50, Some(200)),
+        "https://example.com/docs/api/reference"
+    );
+
+    let objective = ToolCall {
+        id: "websearch-objective".to_string(),
+        name: "websearch".to_string(),
+        input: serde_json::json!({
+            "objective": "rust async runtimes",
+            "search_queries": ["rust async"]
+        }),
+        intent: None,
+        thought_signature: None,
+    };
+    assert_eq!(
+        tools_ui::get_tool_summary_with_budget(&objective, 50, Some(200)),
+        "'rust async runtimes'"
+    );
+
+    let fallback = ToolCall {
+        id: "websearch-fallback".to_string(),
+        name: "websearch".to_string(),
+        input: serde_json::json!({
+            "search_queries": ["tokio tutorial"]
+        }),
+        intent: None,
+        thought_signature: None,
+    };
+    assert_eq!(
+        tools_ui::get_tool_summary_with_budget(&fallback, 50, Some(200)),
+        "'tokio tutorial'"
+    );
+
+    let malformed = ToolCall {
+        id: "webfetch-malformed".to_string(),
+        name: "webfetch".to_string(),
+        input: serde_json::json!({
+            "urls": ["notaurl", "abcdefghijklmnopqrstuvwxyz"]
+        }),
+        intent: None,
+        thought_signature: None,
+    };
+    assert_eq!(
+        tools_ui::get_tool_summary_with_budget(&malformed, 50, Some(200)),
+        "notaurl, abcdefghijklmno…"
+    );
 }
 
 #[test]

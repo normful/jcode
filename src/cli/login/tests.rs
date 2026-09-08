@@ -238,7 +238,10 @@ impl Drop for ScopedLoginTestHome {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn scoped_concurrent_begin_completion_and_cancel_are_isolated() {
+    // The env lock must span the whole async test: it serializes process-wide
+    // env mutation against every other env-touching test.
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
     let _home = ScopedLoginTestHome::new(temp.path());
