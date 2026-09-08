@@ -12,7 +12,6 @@ pub use jcode_config_types::{
     NamedProviderType, NativeScrollbarConfig, NotificationsConfig, OverscrollStatusMode,
     PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig, SessionPickerResumeAction,
     SponsorsConfig, SwarmSpawnMode, SwarmStripLayout, TerminalConfig, UpdateChannel,
-    WebSearchConfig, WebSearchEngine,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -49,9 +48,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_AUTO_POKE",
     "JCODE_AUTO_SERVER_RELOAD",
     "JCODE_CHECK_UPDATES",
-    "JCODE_BING_API_KEY",
-    "JCODE_BING_API_KEY_ENV",
-    "JCODE_BING_MARKET",
     "JCODE_CENTERED_TOGGLE_KEY",
     "JCODE_CHAT_NATIVE_SCROLLBAR",
     "JCODE_COMPACT_NOTIFICATIONS",
@@ -156,7 +152,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_SCROLL_PROMPT_UP_KEY",
     "JCODE_SCROLL_UP_FALLBACK_KEY",
     "JCODE_SCROLL_UP_KEY",
-    "JCODE_SEARXNG_URL",
     "JCODE_SHOW_AGENTGREP_OUTPUT",
     "JCODE_SHOW_BASH_OUTPUT",
     "JCODE_SHOW_DIFFS",
@@ -187,8 +182,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_TRUSTED_EXTERNAL_AUTH_SOURCES",
     "JCODE_TYPING_SCROLL_LOCK_TOGGLE_KEY",
     "JCODE_UPDATE_CHANNEL",
-    "JCODE_WEBSEARCH_ENGINE",
-    "JCODE_WEBSEARCH_FALLBACK_ENGINES",
     "JCODE_WORKSPACE_DOWN_KEY",
     "JCODE_WORKSPACE_LEFT_KEY",
     "JCODE_WORKSPACE_RIGHT_KEY",
@@ -488,9 +481,6 @@ pub struct Config {
 
     /// Feature toggles
     pub features: FeatureConfig,
-
-    /// Web search tool configuration
-    pub websearch: WebSearchConfig,
 
     /// Built-in tool exposure configuration
     pub tools: ToolConfig,

@@ -101,14 +101,57 @@ fn compact_tool_input_for_display(name: &str, input: &serde_json::Value) -> serd
         // Web/search tools: keep the URL/query so the transcript row still
         // shows what was fetched or searched after storage compaction.
         "webfetch" => obj(vec![(
-            "url",
+            "urls",
             input
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(|s| serde_json::Value::String(crate::util::truncate_str(s, 200).to_string()))
+                .get("urls")
+                .and_then(|v| v.as_array())
+                .map(|urls| {
+                    serde_json::Value::Array(
+                        urls.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|s| {
+                                serde_json::Value::String(
+                                    crate::util::truncate_str(s, 200).to_string(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
                 .unwrap_or(serde_json::Value::Null),
         )]),
-        "websearch" | "codesearch" | "session_search" | "conversation_search" => obj(vec![(
+        "websearch" => obj(vec![
+            (
+                "objective",
+                input
+                    .get("objective")
+                    .and_then(|v| v.as_str())
+                    .map(|s| {
+                        serde_json::Value::String(crate::util::truncate_str(s, 200).to_string())
+                    })
+                    .unwrap_or(serde_json::Value::Null),
+            ),
+            (
+                "search_queries",
+                input
+                    .get("search_queries")
+                    .and_then(|v| v.as_array())
+                    .map(|queries| {
+                        serde_json::Value::Array(
+                            queries
+                                .iter()
+                                .filter_map(|v| v.as_str())
+                                .map(|s| {
+                                    serde_json::Value::String(
+                                        crate::util::truncate_str(s, 200).to_string(),
+                                    )
+                                })
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or(serde_json::Value::Null),
+            ),
+        ]),
+        "codesearch" | "session_search" | "conversation_search" => obj(vec![(
             "query",
             input
                 .get("query")
@@ -517,17 +560,22 @@ mod tests {
         let mut message = tool_message(
             "webfetch",
             serde_json::json!({
-                "url": "https://example.com/docs/api",
-                "format": "markdown",
-                "timeout": 30
+                "urls": ["https://example.com/docs/api", "https://example.org/other"],
+                "objective": "Compare the docs",
+                "full_content": true
             }),
         );
         compact_display_message_tool_data(&mut message);
         let tool = message.tool_data.expect("tool data");
         assert_eq!(
-            tool.input.get("url").and_then(|v| v.as_str()),
-            Some("https://example.com/docs/api")
+            tool.input.get("urls"),
+            Some(&serde_json::json!([
+                "https://example.com/docs/api",
+                "https://example.org/other"
+            ]))
         );
+        assert!(tool.input.get("objective").is_none());
+        assert!(tool.input.get("full_content").is_none());
         let summary = crate::tui::ui::tools_ui::get_tool_summary(&tool);
         assert!(
             summary.contains("example.com"),
@@ -539,14 +587,26 @@ mod tests {
     fn compaction_keeps_websearch_query_for_transcript_summary() {
         let mut message = tool_message(
             "websearch",
-            serde_json::json!({ "query": "rust async traits", "num_results": 5 }),
+            serde_json::json!({
+                "objective": "rust async traits",
+                "search_queries": ["rust async traits", "rust async tutorial"],
+                "max_results": 5
+            }),
         );
         compact_display_message_tool_data(&mut message);
         let tool = message.tool_data.expect("tool data");
         assert_eq!(
-            tool.input.get("query").and_then(|v| v.as_str()),
+            tool.input.get("objective").and_then(|v| v.as_str()),
             Some("rust async traits")
         );
+        assert_eq!(
+            tool.input.get("search_queries"),
+            Some(&serde_json::json!([
+                "rust async traits",
+                "rust async tutorial"
+            ]))
+        );
+        assert!(tool.input.get("max_results").is_none());
         let summary = crate::tui::ui::tools_ui::get_tool_summary(&tool);
         assert!(
             summary.contains("rust async traits"),

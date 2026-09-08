@@ -135,6 +135,8 @@ The agent is asking for infrastructure and integration MCPs, not for sponsored p
    hard blocker for agent-completed setup.
 5. Fix the upstream feature failures that generate discovery traffic: swarm reviewer spawn
    failures and blocked `websearch` account for a large share of code-review and web-data
-   browses.
+   browses. (2026-09-08 note: `websearch`/fetch now go through the Parallel API rather
+   than keyless scraping, so the "blocked by anti-bot pages" conclusion above and the
+   4-queries note are historical; revisit after measuring Parallel-era discovery traffic.)
 6. Instrument setup completion. `discovery_usage` is empty, so nothing after `select` is
    observable. Without it, "select" is the only conversion proxy we have.

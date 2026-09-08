@@ -30,6 +30,7 @@ mod memory;
 mod multiedit;
 mod open;
 mod panel;
+mod parallel;
 mod patch;
 mod read;
 pub mod selfdev;

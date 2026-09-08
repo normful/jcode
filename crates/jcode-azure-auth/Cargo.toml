@@ -9,8 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
-# Use rustls instead of native-tls so the whole binary stays OpenSSL-free
-# (required for the BoringSSL-backed websearch client to link; see GH #270).
+# Use rustls instead of native-tls so the whole binary stays OpenSSL-free.
 # azure 1.0 makes the reqwest TLS backend selectable; 0.24 hardcoded native-tls.
 azure_core = { version = "1.0", default-features = false, features = ["reqwest_rustls", "reqwest_deflate", "reqwest_gzip", "tokio"] }
 azure_identity = { version = "1.0", default-features = false, features = ["tokio"] }
