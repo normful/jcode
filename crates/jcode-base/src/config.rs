@@ -553,6 +553,11 @@ pub struct Config {
     /// Feature toggles
     pub features: FeatureConfig,
 
+    /// Web search tool configuration. Holds the provider-native search options
+    /// only: local search is the Parallel-backed built-in tool and has no
+    /// config.
+    pub websearch: WebSearchConfig,
+
     /// Built-in tool exposure configuration
     pub tools: ToolConfig,
 
