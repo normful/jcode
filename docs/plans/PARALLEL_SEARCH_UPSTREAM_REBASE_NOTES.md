@@ -112,6 +112,35 @@ precedence is a product call, not a rebase call.
   every_provider_sends_clean_schemas` and `cargo test -p jcode-schema-dialect`
   — pass, so the new array schemas survive the schema dialects.
 
+### Full-suite failures do not come from this branch
+
+A whole-workspace `cargo test --workspace --lib --no-fail-fast` reports
+failures in unrelated crates (`auth::transfer`, `worktrees`, TUI goldens,
+`compile_remote`, session-context cases). None of them touch the changed
+surface, and they were checked against a pristine `upstream/master` worktree:
+
+- `jcode-base`: the same 11 failures on upstream, by name.
+- `jcode-terminal-launch`: the same 3. The root cause is ambient environment,
+  not code: the test sets `GHOSTTY_RESOURCES_DIR` but clears neither
+  `HERDR_ENV` nor `HERDR_PANE_ID`, and detection now prefers herdr, so it fails
+  when jcode runs inside a herdr pane. The other two are mutex-poisoning
+  cascades from that first failure.
+- `jcode-setup-hints`: the same 1. `SetupHintsState::default()` sets
+  `startup_spawn_hint_dismissed: true`, while the test builds its state from
+  `..Default::default()` and then expects a hint; the function it exercises is
+  untouched here.
+- `jcode-app-core`, `jcode`, `jcode-harness-api-server`, `jcode-provider-bedrock`,
+  `jcode-sdk`, `jcode-tui`: the same failure names reproduce on upstream. The
+  two app-core failures on this branch that upstream does not show are
+  `test_openai_supports_codex_models` (cross-crate interference — it passes in
+  isolation on both trees) and `mcp_startup_tests::headless_mcp_cold_wait...`
+  (an ordering assertion, flaky).
+- The two cap failures name only `bash` (~53 tokens) and `macos_computer_use`
+  (~159 tokens, 93 of them in one parameter). Both descriptions are
+  byte-identical upstream and neither file is touched here, so this is a
+  pre-existing, macOS-only failure. The migrated tools are inside the caps:
+  `websearch` 18 and `webfetch` 13, against a cap of 20.
+
 ### Environment caveats (not caused by this branch)
 
 - This machine's `cc` is GCC 15.3.0, not Apple clang, so the `aws-lc-sys`
