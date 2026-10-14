@@ -26,7 +26,14 @@ pub const LOCAL_WEBSEARCH_TOOL: &str = "websearch";
 /// only replaces the built-in: an SDK custom tool that reuses the `websearch`
 /// name (to route search through the app's own callback) keeps its definition
 /// and is never swapped for hosted search.
-pub const LOCAL_WEBSEARCH_DESCRIPTION: &str = "Search the web.";
+///
+/// This is the value `WebSearchTool::description()` returns, and it counts
+/// against the ~20-token description cap enforced by
+/// `tool_descriptions_stay_under_token_cap`. Shortening it here shortens what
+/// the model sees; changing it here without changing the built-in tool's
+/// description would disable the provider-native swap entirely.
+pub const LOCAL_WEBSEARCH_DESCRIPTION: &str =
+    "Search the web using Parallel. Returns result titles, URLs, and excerpts.";
 
 /// True when `tool` is jcode's built-in local `websearch` tool, as opposed to
 /// an SDK custom tool with the same name.

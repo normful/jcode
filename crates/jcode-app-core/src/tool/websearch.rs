@@ -71,7 +71,9 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web using Parallel. Returns result titles, URLs, and excerpts."
+        // Shared with `is_builtin_local_websearch`: provider-native search only
+        // swaps the built-in tool, and it identifies it by this exact string.
+        jcode_message_types::provider_native::LOCAL_WEBSEARCH_DESCRIPTION
     }
 
     fn parameters_schema(&self) -> Value {
