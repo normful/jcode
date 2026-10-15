@@ -3,15 +3,74 @@
 //! The API key comes from the `PARALLEL_API_KEY` process environment variable
 //! only. There is no config-file section for it, so changing the key requires
 //! a daemon restart (process env is fixed at spawn).
+//!
+//! The API origin is overridable through `JCODE_PARALLEL_API_BASE`, or through
+//! the vendor's own `PARALLEL_BASE_URL`, for egress proxies, caching gateways
+//! and local recorders. The value is an origin, optionally with a path prefix:
+//! `parallel_search_url` / `parallel_extract_url` append `/v1/search` and
+//! `/v1/extract`. Nothing is sent anywhere but `api.parallel.ai` unless one of
+//! those variables is set, and `PARALLEL_API_KEY` travels to whatever host the
+//! override names. Like the key, the value is read per request, but a daemon
+//! only ever sees the environment it was spawned with.
 
-/// Parallel Search endpoint (`POST`).
-pub const PARALLEL_SEARCH_URL: &str = "https://api.parallel.ai/v1/search";
-/// Parallel Extract endpoint (`POST`).
-pub const PARALLEL_EXTRACT_URL: &str = "https://api.parallel.ai/v1/extract";
+/// Default Parallel API origin. `parallel_search_url` / `parallel_extract_url`
+/// append the `/v1/<resource>` paths, so an override names an origin (optionally
+/// with a path prefix), never a versioned base.
+const DEFAULT_PARALLEL_BASE_URL: &str = "https://api.parallel.ai";
+/// Origin overrides, in precedence order: this repo's convention first, then the
+/// vendor's own knob (Parallel's Python SDK reads `PARALLEL_BASE_URL`).
+const PARALLEL_BASE_URL_VARS: [&str; 2] = ["JCODE_PARALLEL_API_BASE", "PARALLEL_BASE_URL"];
 /// Per-request timeout for Parallel API calls.
 pub const PARALLEL_REQUEST_TIMEOUT_SECS: u64 = 60;
 /// Ceiling on excerpt characters requested from Parallel Search.
 pub const PARALLEL_MAX_CHARS_TOTAL: usize = 40_000;
+
+/// Resolve the Parallel API origin.
+///
+/// The first non-blank, valid override wins; blank values are skipped and
+/// invalid values are skipped with a warning, so a typo never silently
+/// redirects a live request to an unrelated host. Read per request, mirroring
+/// `provider::openai::resolve_api_base`, so no cache needs invalidating.
+fn parallel_base_url() -> String {
+    for var in PARALLEL_BASE_URL_VARS {
+        let Ok(raw) = std::env::var(var) else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match crate::provider_catalog::normalize_api_base(trimmed) {
+            Some(base) => {
+                if base.ends_with("/v1") {
+                    crate::logging::warn(&format!(
+                        "{var} '{}' already ends in /v1; jcode appends /v1/search and \
+                         /v1/extract itself, so requests will go to {base}/v1/...",
+                        trimmed
+                    ));
+                }
+                return base;
+            }
+            None => crate::logging::warn(&format!(
+                "Ignoring invalid {var} '{}'; expected an absolute http(s):// origin. \
+                 Plain http is accepted only for loopback, private, link-local, .local \
+                 and .lan hosts, because the Parallel API key is sent to this host.",
+                trimmed
+            )),
+        }
+    }
+    DEFAULT_PARALLEL_BASE_URL.to_string()
+}
+
+/// Parallel Search endpoint (`POST`).
+pub fn parallel_search_url() -> String {
+    format!("{}/v1/search", parallel_base_url())
+}
+
+/// Parallel Extract endpoint (`POST`).
+pub fn parallel_extract_url() -> String {
+    format!("{}/v1/extract", parallel_base_url())
+}
 
 /// Read the Parallel API key from the process environment.
 ///
@@ -103,6 +162,137 @@ mod tests {
                 "error should name the variable for {value:?}: {err}"
             );
         }
+    }
+
+    /// Run `f` with only the given base-URL overrides in place: both variables
+    /// are cleared first so the "no override" case is deterministic, and every
+    /// value is restored afterwards. Holds the process-env lock, because env is
+    /// process-global.
+    fn with_base_env<R>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
+        let _guard = crate::storage::lock_test_env();
+        let prev: Vec<(String, Option<std::ffi::OsString>)> = PARALLEL_BASE_URL_VARS
+            .iter()
+            .map(|var| ((*var).to_string(), std::env::var_os(var)))
+            .collect();
+        for var in PARALLEL_BASE_URL_VARS {
+            crate::env::remove_var(var);
+        }
+        for (var, value) in vars {
+            match value {
+                Some(value) => crate::env::set_var(var, value),
+                None => crate::env::remove_var(var),
+            }
+        }
+        let result = f();
+        for (var, value) in prev {
+            match value {
+                Some(value) => crate::env::set_var(&var, value),
+                None => crate::env::remove_var(&var),
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn web_urls_default_to_the_parallel_origin() {
+        with_base_env(&[], || {
+            assert_eq!(parallel_search_url(), "https://api.parallel.ai/v1/search");
+            assert_eq!(parallel_extract_url(), "https://api.parallel.ai/v1/extract");
+        });
+    }
+
+    #[test]
+    fn override_replaces_the_origin_and_keeps_the_version_path() {
+        with_base_env(
+            &[("JCODE_PARALLEL_API_BASE", Some("https://proxy.example.com"))],
+            || {
+                assert_eq!(parallel_search_url(), "https://proxy.example.com/v1/search");
+                assert_eq!(
+                    parallel_extract_url(),
+                    "https://proxy.example.com/v1/extract"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn override_keeps_a_path_prefix_and_strips_a_trailing_slash() {
+        with_base_env(
+            &[(
+                "JCODE_PARALLEL_API_BASE",
+                Some("https://proxy.example.com/parallel/"),
+            )],
+            || {
+                assert_eq!(
+                    parallel_search_url(),
+                    "https://proxy.example.com/parallel/v1/search"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn vendor_alias_is_honoured_and_the_jcode_name_wins() {
+        with_base_env(
+            &[("PARALLEL_BASE_URL", Some("https://vendor.example.com"))],
+            || {
+                assert_eq!(
+                    parallel_search_url(),
+                    "https://vendor.example.com/v1/search"
+                );
+            },
+        );
+        with_base_env(
+            &[
+                ("PARALLEL_BASE_URL", Some("https://vendor.example.com")),
+                ("JCODE_PARALLEL_API_BASE", Some("https://jcode.example.com")),
+            ],
+            || {
+                assert_eq!(parallel_search_url(), "https://jcode.example.com/v1/search");
+            },
+        );
+    }
+
+    #[test]
+    fn blank_override_is_skipped_not_fatal() {
+        with_base_env(&[("JCODE_PARALLEL_API_BASE", Some(""))], || {
+            assert_eq!(parallel_search_url(), "https://api.parallel.ai/v1/search");
+        });
+        with_base_env(
+            &[
+                ("JCODE_PARALLEL_API_BASE", Some("   ")),
+                ("PARALLEL_BASE_URL", Some("https://vendor.example.com")),
+            ],
+            || {
+                assert_eq!(
+                    parallel_search_url(),
+                    "https://vendor.example.com/v1/search"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn invalid_override_falls_back_to_the_default() {
+        for invalid in ["notaurl", "ftp://x", "http://public.example.com"] {
+            with_base_env(&[("JCODE_PARALLEL_API_BASE", Some(invalid))], || {
+                assert_eq!(
+                    parallel_search_url(),
+                    "https://api.parallel.ai/v1/search",
+                    "invalid override {invalid:?} should be ignored"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn loopback_plain_http_override_is_allowed() {
+        with_base_env(
+            &[("JCODE_PARALLEL_API_BASE", Some("http://127.0.0.1:8080"))],
+            || {
+                assert_eq!(parallel_search_url(), "http://127.0.0.1:8080/v1/search");
+            },
+        );
     }
 
     #[test]

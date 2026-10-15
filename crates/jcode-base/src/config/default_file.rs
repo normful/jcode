@@ -325,6 +325,12 @@ update_channel = "stable"
 # key is env-only: export PARALLEL_API_KEY in the daemon's environment. The
 # daemon reads process env at spawn, so changing the key needs a restart.
 #
+# Requests go to https://api.parallel.ai by default. To route them through an
+# egress proxy, a caching gateway, or a local recorder, set
+# JCODE_PARALLEL_API_BASE (or PARALLEL_BASE_URL, the name Parallel's own SDK
+# reads) to an origin; /v1/search and /v1/extract are appended to it. The API
+# key is sent to whatever host that names, so only point it at a host you trust.
+#
 # The option below configures *provider-native* server-side search instead
 # (Anthropic web_search on the first-party API, OpenAI Responses web_search).
 # Searches then run on the provider's side and need no extra key, at roughly
@@ -834,6 +840,10 @@ mod tests {
         assert!(
             template.contains("PARALLEL_API_KEY"),
             "template should point at the env var local search needs"
+        );
+        assert!(
+            template.contains("JCODE_PARALLEL_API_BASE"),
+            "template should document how to point local search at a proxy origin"
         );
     }
 

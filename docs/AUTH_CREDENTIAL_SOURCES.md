@@ -158,6 +158,41 @@ Things to know before using it:
   ignored with a warning; the built-in endpoint stays in effect. Loopback,
   private, link-local, `.local` and `.lan` hosts are accepted over plain `http`.
 
+## Redirecting the local web tools' Parallel origin
+
+`websearch` and `webfetch` post to `https://api.parallel.ai` by default. Both can
+be pointed at a corporate egress proxy, a caching gateway, or a local recorder:
+
+```sh
+# Per invocation, or export it in the daemon's environment before it spawns:
+JCODE_PARALLEL_API_BASE=http://localhost:8080 jcode run 'search the web for X'
+```
+
+The vendor's own name is accepted as a second spelling, so one variable can
+configure every Parallel client on the box: `JCODE_PARALLEL_API_BASE` wins, then
+`PARALLEL_BASE_URL` (the name Parallel's Python SDK reads).
+
+Things to know before using it:
+
+- **The value is an origin, not a versioned base.** jcode appends `/v1/search`
+  and `/v1/extract` to it, so `https://proxy.example.com` is right and
+  `https://proxy.example.com/v1` would produce `/v1/v1/search`. A value already
+  ending in `/v1` is used as given and warns rather than being rewritten.
+- **The proxy must speak Parallel's wire protocol** — the same paths, the same
+  `x-api-key` header, the same search/extract bodies. There is no request
+  rewriting, no alternate auth, and no header knob for proxies that mint their
+  own tokens.
+- **`PARALLEL_API_KEY` is sent to whatever host the override names.** Same rule
+  as the provider override above: opt-in and user-owned, with no host allowlist.
+- Invalid values (not a URL, a non-`http(s)` scheme, or public plain `http://`)
+  are ignored with a warning and the default origin stays in effect; loopback,
+  private, link-local, `.local` and `.lan` hosts are accepted over plain `http`.
+- It is **env-only**: no `[websearch]` config field, and no TUI or
+  `jcode login` prompt. Like every other `JCODE_*` value it is read from the
+  process environment, so a daemon picks it up only when it is restarted.
+- A proxy that fails surfaces its own error through the normal tool-error path;
+  there is no silent fallback to `api.parallel.ai`.
+
 ## Importing credentials from other agent tools
 
 On a fresh install jcode can **reuse logins left behind by other coding

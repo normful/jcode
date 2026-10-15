@@ -20,8 +20,9 @@ impl WebFetchTool {
         }
     }
 
-    /// Execute against an explicit endpoint. Production passes
-    /// `PARALLEL_EXTRACT_URL`; tests pass a mock server URL.
+    /// Execute against an explicit endpoint. Production passes the URL from
+    /// `parallel::parallel_extract_url()` (the default origin unless an override
+    /// names another one); tests pass a mock server URL.
     async fn execute_with_endpoint(
         &self,
         input: Value,
@@ -120,7 +121,7 @@ impl Tool for WebFetchTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
-        self.execute_with_endpoint(input, ctx, super::parallel::PARALLEL_EXTRACT_URL)
+        self.execute_with_endpoint(input, ctx, &super::parallel::parallel_extract_url())
             .await
     }
 }
@@ -334,6 +335,26 @@ mod tests {
         }
     }
 
+    /// Both override variables, so a test that sets one cannot leak it into
+    /// another test in this binary.
+    const BASE_VARS: [&str; 2] = ["JCODE_PARALLEL_API_BASE", "PARALLEL_BASE_URL"];
+
+    fn save_parallel_base() -> [Option<std::ffi::OsString>; 2] {
+        [
+            std::env::var_os(BASE_VARS[0]),
+            std::env::var_os(BASE_VARS[1]),
+        ]
+    }
+
+    fn restore_parallel_base(prev: [Option<std::ffi::OsString>; 2]) {
+        for (var, value) in BASE_VARS.into_iter().zip(prev) {
+            match value {
+                Some(value) => crate::env::set_var(var, value),
+                None => crate::env::remove_var(var),
+            }
+        }
+    }
+
     #[test]
     fn rejects_empty_or_oversized_url_lists() {
         let err = validate_fetch_input(&fetch_input(vec![], None, None, None))
@@ -459,16 +480,31 @@ mod tests {
         assert!(validated.full_content);
     }
 
+    // Minimal in-process HTTP mock (mirrors the update.rs test pattern): serves
+    // one canned response and captures the request line and body for assertions.
+    type CapturedBody = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+    type CapturedRequestLine = std::sync::Arc<std::sync::Mutex<String>>;
+    type CapturedHeaderLines = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
     fn mock_extract_server(
         status: u16,
         response_body: &str,
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    ) -> (
+        String,
+        CapturedBody,
+        CapturedRequestLine,
+        CapturedHeaderLines,
+    ) {
         use std::io::{BufRead, BufReader, Read, Write};
         use std::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
         let addr = listener.local_addr().expect("mock server addr");
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured_server = std::sync::Arc::clone(&captured);
+        let request_line = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let request_line_server = std::sync::Arc::clone(&request_line);
+        let header_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let header_lines_server = std::sync::Arc::clone(&header_lines);
         let response_body = response_body.to_string();
         std::thread::spawn(move || {
             let Ok((mut stream, _)) = listener.accept() else {
@@ -477,12 +513,19 @@ mod tests {
             let mut content_length = 0usize;
             {
                 let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+                let mut first_line = true;
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 {
                         break;
                     }
                     let trimmed = line.trim_end().to_string();
+                    if first_line {
+                        *request_line_server.lock().unwrap() = trimmed.clone();
+                        first_line = false;
+                    } else if !trimmed.is_empty() {
+                        header_lines_server.lock().unwrap().push(trimmed.clone());
+                    }
                     if trimmed.is_empty() {
                         break;
                     }
@@ -502,7 +545,12 @@ mod tests {
             );
             let _ = stream.write_all(response.as_bytes());
         });
-        (format!("http://{addr}/v1/extract"), captured)
+        (
+            format!("http://{addr}/v1/extract"),
+            captured,
+            request_line,
+            header_lines,
+        )
     }
 
     #[tokio::test]
@@ -528,7 +576,7 @@ mod tests {
         let _guard = crate::storage::lock_test_env();
         let prev = std::env::var_os("PARALLEL_API_KEY");
         crate::env::set_var("PARALLEL_API_KEY", "test-key");
-        let (url, captured) = mock_extract_server(
+        let (url, captured, _request_line, _header_lines) = mock_extract_server(
             200,
             r#"{"extract_id":"e","results":[{"url":"https://one.test","title":"One","excerpts":["hi"]}],"errors":[],"session_id":"x"}"#,
         );
@@ -552,7 +600,7 @@ mod tests {
         let _guard = crate::storage::lock_test_env();
         let prev = std::env::var_os("PARALLEL_API_KEY");
         crate::env::set_var("PARALLEL_API_KEY", "bad-key");
-        let (url, _captured) = mock_extract_server(
+        let (url, _captured, _request_line, _header_lines) = mock_extract_server(
             402,
             r#"{"type":"error","error":{"ref_id":"r","message":"out of credits"}}"#,
         );
@@ -587,5 +635,58 @@ mod tests {
         let (out, truncated) = truncate_output(long);
         assert!(truncated);
         assert!(out.chars().all(|c| c == 'é'));
+    }
+
+    /// Value of `name` from captured header lines, matched case-insensitively.
+    fn header_value<'a>(headers: &'a [String], name: &str) -> Option<&'a str> {
+        let prefix = format!("{}:", name.to_ascii_lowercase());
+        headers
+            .iter()
+            .find(|line| line.to_ascii_lowercase().starts_with(&prefix))
+            .and_then(|line| line.split_once(':').map(|(_, value)| value.trim()))
+    }
+
+    /// The mock hands back a full endpoint URL; the resolver takes an origin, so
+    /// the appended `/v1/<resource>` path is trimmed off before it is exported.
+    fn origin_of_mock(mock_url: &str, endpoint_path: &str) -> String {
+        mock_url
+            .trim_end_matches(endpoint_path)
+            .trim_end_matches('/')
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn fetch_execute_honours_the_base_override() {
+        let _guard = crate::storage::lock_test_env();
+        let prev_key = std::env::var_os("PARALLEL_API_KEY");
+        let prev_base = save_parallel_base();
+        crate::env::set_var("PARALLEL_API_KEY", "test-key");
+        let (url, _captured, request_line, header_lines) = mock_extract_server(
+            200,
+            r#"{"extract_id":"e","results":[{"url":"https://one.test","title":"One","excerpts":["hi"]}],"errors":[],"session_id":"x"}"#,
+        );
+        let origin = origin_of_mock(&url, "/v1/extract");
+        crate::env::set_var(BASE_VARS[0], &origin);
+        assert_eq!(super::super::parallel::parallel_extract_url(), url);
+        let tool = WebFetchTool::new();
+        let result = tool
+            .execute(json!({"urls": ["https://one.test"]}), fetch_ctx())
+            .await;
+        let line = request_line.lock().unwrap().clone();
+        let headers = header_lines.lock().unwrap().clone();
+        restore_parallel_key(prev_key);
+        restore_parallel_base(prev_base);
+        let out = result.unwrap();
+        assert_eq!(line, "POST /v1/extract HTTP/1.1");
+        assert_eq!(
+            header_value(&headers, "x-api-key"),
+            Some("test-key"),
+            "the override host must receive the API key: {headers:?}"
+        );
+        assert!(
+            out.output.contains("https://one.test"),
+            "unexpected: {}",
+            out.output
+        );
     }
 }
