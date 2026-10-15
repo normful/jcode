@@ -96,6 +96,68 @@ jcode auth-test --provider <id>
 3. Ignore `auth-validation.json` verdicts older than 7 days (shown as `stale`);
    re-run `jcode auth-test` instead.
 
+## Redirecting a built-in provider's base URL (per-profile override)
+
+Some built-in OpenAI-compatible profiles can be pointed at a corporate proxy or a
+self-hosted gateway without changing which provider jcode thinks it is talking
+to:
+
+```sh
+# Per invocation, or export it for the session:
+JCODE_OPENCODE_GO_API_BASE=http://localhost:9000/v1 jcode -p opencode-go
+```
+
+Or persistently, beside the provider's key in its env file
+(`~/.config/jcode/opencode-go.env`):
+
+```
+OPENCODE_GO_API_KEY=...
+JCODE_OPENCODE_GO_API_BASE=http://localhost:9000/v1
+```
+
+The name is derived from the profile id: `JCODE_<PROFILE_ID>_API_BASE`, with
+`-` mapped to `_`. It is read from the process environment first and then from
+that profile's env file, so a running daemon picks up an env-file change at its
+next resolve without a restart. A process-environment value is fixed at daemon
+spawn, like every other `JCODE_*` provider variable.
+
+Only these profile ids honour it (`API_BASE_OVERRIDABLE_PROFILES` in
+`crates/jcode-base/src/provider_catalog.rs`):
+
+| Profile id | Variable |
+|---|---|
+| `opencode` | `JCODE_OPENCODE_API_BASE` |
+| `opencode-go` | `JCODE_OPENCODE_GO_API_BASE` |
+| `fireworks` | `JCODE_FIREWORKS_API_BASE` |
+| `minimax` | `JCODE_MINIMAX_API_BASE` |
+
+Four built-in profiles deliberately do **not** honour it, because their base URL
+selects protocol or authentication rather than just the host: `kimi` (its coding
+endpoint gets special headers and reasoning replay), `anthropic-api` (switches
+auth to `x-api-key` + `anthropic-version`), `mistral` (suppresses non-standard
+request fields), and `openrouter` (provider routing and pinning). Everything else
+is unaffected until it is added to the allowlist.
+
+Things to know before using it:
+
+- **The provider API key is sent to whatever host the override names.** The
+  override is opt-in and user-owned; there is no allowlist of hosts.
+- Only the base URL changes. The profile id, display name, key variable and model
+  lists stay the same, which is what keeps `opencode-go`'s `/responses` routing
+  intact (that routing accepts the profile id as an independent signal from the
+  base URL, so the six Responses models keep going to `/responses`).
+- The model-catalog disk cache is keyed by the profile id, so switching to a proxy
+  invalidates the cached catalog once: `/model` falls back to the static list
+  until the proxy answers `/models`. If the proxy serves no `/models`, the static
+  fallback list applies — and for `opencode-go` that list does not contain the six
+  Responses models, so they will not be offered in `/model`.
+- On `minimax`, an explicit override beats the `sk-cp-` key heuristic: a China-plan
+  key that would otherwise select `api.minimaxi.com` is sent to the override host
+  instead. That ordering is intentional — explicit beats inferred.
+- Invalid values (not a URL, non-`http(s)` scheme, or public plain `http://`) are
+  ignored with a warning; the built-in endpoint stays in effect. Loopback,
+  private, link-local, `.local` and `.lan` hosts are accepted over plain `http`.
+
 ## Importing credentials from other agent tools
 
 On a fresh install jcode can **reuse logins left behind by other coding

@@ -2937,6 +2937,73 @@ fn custom_endpoint_using_jcode_key_name_is_not_a_subscription_runtime() {
     );
 }
 
+/// The env route to a proxied OpenCode Go: the base URL names the proxy while
+/// the cache namespace still names the profile. Identity has to come from the
+/// namespace, because the reverse `api_base` lookup cannot match a proxy.
+#[test]
+fn proxy_base_still_resolves_the_go_profile_id() {
+    let _lock = ENV_LOCK.lock();
+    let temp = TempDir::new().expect("create temp home");
+    let jcode_home = temp.path().join("jcode-home");
+    let _jcode_home = EnvVarGuard::set("JCODE_HOME", &jcode_home);
+    let _home = EnvVarGuard::set("HOME", temp.path());
+    let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
+    let _env = isolate_openrouter_autodetect_env();
+    let _base = EnvVarGuard::set("JCODE_OPENROUTER_API_BASE", "https://proxy.example/v1");
+    let _namespace = EnvVarGuard::set("JCODE_OPENROUTER_CACHE_NAMESPACE", "opencode-go");
+    let _key_name = EnvVarGuard::set("JCODE_OPENROUTER_API_KEY_NAME", "OPENCODE_GO_API_KEY");
+    let _key = EnvVarGuard::set("OPENCODE_GO_API_KEY", "proxy-test-key");
+
+    let provider = OpenRouterProvider::new().expect("build opencode-go proxy runtime");
+
+    assert_eq!(
+        provider.direct_openai_compatible_route_parts(),
+        Some((
+            "OpenCode Go".to_string(),
+            "openai-compatible:opencode-go".to_string(),
+            "https://proxy.example/v1".to_string(),
+        )),
+        "a proxy base must not cost the opencode-go identity that routes /responses"
+    );
+}
+
+/// End to end through the profile-env application the daemon actually performs:
+/// `JCODE_OPENCODE_GO_API_BASE`, resolved by the profile resolver, has to become
+/// the runtime base URL without costing the profile identity that routes
+/// `/responses`.
+#[test]
+fn opencode_go_overridden_profile_env_reaches_the_runtime() {
+    let _lock = ENV_LOCK.lock();
+    let temp = TempDir::new().expect("create temp home");
+    let jcode_home = temp.path().join("jcode-home");
+    let _jcode_home = EnvVarGuard::set("JCODE_HOME", &jcode_home);
+    let _home = EnvVarGuard::set("HOME", temp.path());
+    let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
+    let _env = isolate_openrouter_autodetect_env();
+    let _override = EnvVarGuard::set("JCODE_OPENCODE_GO_API_BASE", "https://proxy.example/v1");
+    let _key = EnvVarGuard::set("OPENCODE_GO_API_KEY", "proxy-test-key");
+
+    jcode_base::provider_catalog::apply_openai_compatible_profile_env(Some(
+        jcode_base::provider_catalog::OPENCODE_GO_PROFILE,
+    ));
+
+    assert_eq!(
+        std::env::var("JCODE_OPENROUTER_API_BASE").ok().as_deref(),
+        Some("https://proxy.example/v1"),
+        "the override must be what gets written to the runtime base"
+    );
+
+    let provider = OpenRouterProvider::new().expect("build opencode-go override runtime");
+    assert_eq!(
+        provider.direct_openai_compatible_route_parts(),
+        Some((
+            "OpenCode Go".to_string(),
+            "openai-compatible:opencode-go".to_string(),
+            "https://proxy.example/v1".to_string(),
+        ))
+    );
+}
+
 #[test]
 fn resolve_extra_body_returns_none_when_unset() {
     let _lock = ENV_LOCK.lock();

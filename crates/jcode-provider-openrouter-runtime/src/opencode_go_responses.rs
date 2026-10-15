@@ -479,6 +479,48 @@ mod tests {
         ));
     }
 
+    /// A proxy base URL defeats the `opencode.ai/zen/go/` signal, so the profile
+    /// id has to carry the routing alone. This is precisely why a base-URL
+    /// override is only ever allowed to change the base URL.
+    #[test]
+    fn proxy_base_keeps_responses_routing_via_profile_id() {
+        for model in [
+            "grok-4.6",
+            "grok-4.7",
+            "gpt-5.6-luna",
+            "gpt-6-luna",
+            "muse-spark-1.3-contributor",
+            "muse-spark-1.2-contributor",
+        ] {
+            assert!(
+                model_uses_responses_api("https://proxy.example/v1", Some("opencode-go"), model),
+                "{model} must still route to /responses through a proxy base"
+            );
+        }
+        assert!(model_uses_responses_api(
+            "http://localhost:9000/v1",
+            Some("opencode-go"),
+            "grok-4.7"
+        ));
+    }
+
+    /// The regression the allowlist design exists to prevent: under any other
+    /// profile name both signals fail, so those six models are silently sent to
+    /// `/chat/completions`.
+    #[test]
+    fn proxy_base_without_go_identity_uses_chat_completions() {
+        assert!(!model_uses_responses_api(
+            "https://proxy.example/v1",
+            Some("opencode-go-proxy"),
+            "grok-4.7"
+        ));
+        assert!(!model_uses_responses_api(
+            "https://proxy.example/v1",
+            None,
+            "grok-4.7"
+        ));
+    }
+
     #[test]
     fn request_uses_responses_input_and_instructions() {
         let request = build_request(

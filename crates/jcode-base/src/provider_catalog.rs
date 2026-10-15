@@ -10,6 +10,16 @@ pub const OPENAI_COMPAT_LOCAL_ENABLED_ENV: &str = "JCODE_OPENAI_COMPAT_LOCAL_ENA
 pub const MINIMAX_CHINA_API_BASE: &str = "https://api.minimaxi.com/v1";
 pub const MINIMAX_CHINA_SETUP_URL: &str = "https://platform.minimaxi.com/docs/llms.txt";
 
+/// Built-in OpenAI-compatible profiles whose endpoint may be redirected to a
+/// proxy or self-hosted gateway via `JCODE_<PROFILE_ID>_API_BASE`.
+///
+/// Per-profile granularity is deliberate, not incidental: four built-in profiles
+/// select protocol or authentication from their own base URL (`kimi`,
+/// `anthropic-api`, `mistral`, `openrouter`), so redirecting them would change
+/// more than the host. Widening this list is a one-line edit; nothing changes for
+/// a user who never sets the override variable.
+const API_BASE_OVERRIDABLE_PROFILES: &[&str] = &["opencode", "opencode-go", "fireworks", "minimax"];
+
 pub fn api_base_uses_localhost(raw: &str) -> bool {
     let Ok(parsed) = url::Url::parse(raw) else {
         return false;
@@ -77,6 +87,11 @@ fn resolve_openai_compatible_profile_endpoint(
     }
 
     apply_profile_key_based_endpoint_overrides(profile, &mut resolved, api_key_hint);
+
+    // Deliberately after the key-based heuristic so an explicit value beats an
+    // inferred endpoint (MiniMax `sk-cp-`), and before the compat-only early
+    // return so allowlisted built-in profiles are reached.
+    apply_api_base_override(profile, &mut resolved);
 
     if profile.id != OPENAI_COMPAT_PROFILE.id {
         return resolved;
@@ -273,6 +288,55 @@ fn apply_profile_key_based_endpoint_overrides(
     {
         resolved.api_base = MINIMAX_CHINA_API_BASE.to_string();
         resolved.setup_url = MINIMAX_CHINA_SETUP_URL.to_string();
+    }
+}
+
+/// The environment variable that overrides `profile_id`'s endpoint, when that
+/// profile is allowlisted. `-` maps to `_` so `opencode-go` derives
+/// `JCODE_OPENCODE_GO_API_BASE`.
+///
+/// `pub(crate)` rather than private so the auth-test sandbox can clear the
+/// derived names instead of leaking an ambient override into its tests.
+pub(crate) fn api_base_override_env_name(profile_id: &str) -> Option<String> {
+    let id = API_BASE_OVERRIDABLE_PROFILES
+        .iter()
+        .find(|id| id.eq_ignore_ascii_case(profile_id))?;
+    Some(format!(
+        "JCODE_{}_API_BASE",
+        id.to_ascii_uppercase().replace('-', "_")
+    ))
+}
+
+/// Read the override for an allowlisted profile, process environment first and
+/// then the profile's env file (`load_env_value_from_env_or_config`), so a
+/// long-lived daemon picks up an env-file override at the next resolve without a
+/// restart.
+fn api_base_override(profile_id: &str, env_file: &str) -> Option<String> {
+    let name = api_base_override_env_name(profile_id)?;
+    load_env_value_from_env_or_config(&name, env_file)
+}
+
+/// Apply the allowlisted per-profile base-URL redirect, if one is configured.
+///
+/// Only `api_base` changes: profile id, key binding and `requires_api_key` are
+/// left alone, which is what keeps `opencode-go`'s `/responses` routing working
+/// through a proxy (that predicate accepts `profile_id == "opencode-go"` as an
+/// independent signal from the base URL).
+fn apply_api_base_override(
+    profile: OpenAiCompatibleProfile,
+    resolved: &mut ResolvedOpenAiCompatibleProfile,
+) {
+    let Some(raw) = api_base_override(profile.id, profile.env_file) else {
+        return;
+    };
+
+    match normalize_api_base(&raw) {
+        Some(base) => resolved.api_base = base,
+        None => eprintln!(
+            "Warning: ignoring invalid {raw} for provider profile '{}'. Use https://... or http://localhost. \
+             An accepted override sends the provider API key to whatever host it names.",
+            profile.id
+        ),
     }
 }
 

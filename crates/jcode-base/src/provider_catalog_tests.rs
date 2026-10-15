@@ -1358,3 +1358,179 @@ fn novita_static_models_are_available_before_live_catalog_refresh() {
         assert!(models.iter().any(|candidate| candidate == model));
     }
 }
+
+/// Value the override tests write; deliberately not a built-in endpoint.
+const API_BASE_OVERRIDE_TEST_VALUE: &str = "https://proxy.example/v1";
+
+#[test]
+fn api_base_override_env_name_is_stable() {
+    for (id, name) in [
+        ("opencode", "JCODE_OPENCODE_API_BASE"),
+        ("opencode-go", "JCODE_OPENCODE_GO_API_BASE"),
+        ("fireworks", "JCODE_FIREWORKS_API_BASE"),
+        ("minimax", "JCODE_MINIMAX_API_BASE"),
+    ] {
+        assert_eq!(
+            api_base_override_env_name(id).as_deref(),
+            Some(name),
+            "{id} must derive {name}"
+        );
+    }
+
+    for id in [
+        "zai",
+        "kimi",
+        "mistral",
+        "anthropic-api",
+        "openrouter",
+        "openai-compatible",
+    ] {
+        assert_eq!(
+            api_base_override_env_name(id),
+            None,
+            "{id} must not be overridable: its base URL selects protocol or auth"
+        );
+    }
+}
+
+#[test]
+fn every_allowlisted_profile_honours_api_base_override() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&[
+        "JCODE_HOME",
+        "MINIMAX_API_KEY",
+        "OPENAI_API_KEY",
+        "JCODE_OPENCODE_API_BASE",
+        "JCODE_OPENCODE_GO_API_BASE",
+        "JCODE_FIREWORKS_API_BASE",
+        "JCODE_MINIMAX_API_BASE",
+    ]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::env::remove_var("MINIMAX_API_KEY");
+    crate::env::remove_var("OPENAI_API_KEY");
+
+    assert_eq!(
+        API_BASE_OVERRIDABLE_PROFILES.to_vec(),
+        ["opencode", "opencode-go", "fireworks", "minimax"].to_vec(),
+        "the allowlist is an explicit decision, not an exclusion rule"
+    );
+
+    for id in API_BASE_OVERRIDABLE_PROFILES {
+        let profile = openai_compatible_profile_by_id(id).expect("allowlisted profile");
+        let env_name = api_base_override_env_name(id).expect("derived override name");
+        crate::env::set_var(&env_name, API_BASE_OVERRIDE_TEST_VALUE);
+
+        let resolved = resolve_openai_compatible_profile(profile);
+
+        assert_eq!(
+            resolved.api_base, API_BASE_OVERRIDE_TEST_VALUE,
+            "{id} must honour {env_name}"
+        );
+        // Identity must survive the redirect: `opencode-go` relies on its profile
+        // id, not its base URL, to route six models to `/responses`.
+        assert_eq!(resolved.id, profile.id, "{id} profile id must not change");
+        assert_eq!(resolved.display_name, profile.display_name);
+        assert_eq!(resolved.api_key_env, profile.api_key_env);
+        assert_eq!(resolved.env_file, profile.env_file);
+        assert_eq!(resolved.requires_api_key, profile.requires_api_key);
+
+        crate::env::remove_var(&env_name);
+    }
+}
+
+#[test]
+fn non_allowlisted_profile_ignores_api_base_override() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&["JCODE_HOME", "JCODE_ZAI_API_BASE"]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::env::set_var("JCODE_ZAI_API_BASE", API_BASE_OVERRIDE_TEST_VALUE);
+
+    let resolved = resolve_openai_compatible_profile(ZAI_PROFILE);
+
+    assert_eq!(resolved.api_base, ZAI_PROFILE.api_base);
+}
+
+#[test]
+fn minimax_api_base_override_outranks_key_heuristic() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&[
+        "JCODE_HOME",
+        "MINIMAX_API_KEY",
+        "OPENAI_API_KEY",
+        "JCODE_MINIMAX_API_BASE",
+    ]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::env::remove_var("MINIMAX_API_KEY");
+    crate::env::remove_var("OPENAI_API_KEY");
+    crate::env::remove_var("JCODE_MINIMAX_API_BASE");
+
+    let inferred = resolve_openai_compatible_profile_with_api_key_hint(
+        MINIMAX_PROFILE,
+        Some("sk-cp-test-token"),
+    );
+    assert_eq!(inferred.api_base, MINIMAX_CHINA_API_BASE);
+
+    crate::env::set_var("JCODE_MINIMAX_API_BASE", API_BASE_OVERRIDE_TEST_VALUE);
+    let explicit = resolve_openai_compatible_profile_with_api_key_hint(
+        MINIMAX_PROFILE,
+        Some("sk-cp-test-token"),
+    );
+    assert_eq!(
+        explicit.api_base, API_BASE_OVERRIDE_TEST_VALUE,
+        "an explicit override must beat the inferred sk-cp- China endpoint"
+    );
+}
+
+#[test]
+fn invalid_api_base_override_is_ignored() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&["JCODE_HOME", "JCODE_FIREWORKS_API_BASE"]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+
+    for invalid in [
+        "not a url",
+        "ftp://proxy.example/v1",
+        "https://",
+        // Public plain-http stays rejected by `normalize_api_base`.
+        "http://proxy.example/v1",
+    ] {
+        crate::env::set_var("JCODE_FIREWORKS_API_BASE", invalid);
+        let resolved = resolve_openai_compatible_profile(FIREWORKS_PROFILE);
+        assert_eq!(
+            resolved.api_base, FIREWORKS_PROFILE.api_base,
+            "{invalid} must be ignored, leaving the built-in endpoint"
+        );
+    }
+}
+
+#[test]
+fn blank_api_base_override_is_ignored() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&["JCODE_HOME", "JCODE_FIREWORKS_API_BASE"]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+
+    for blank in ["", "   ", "\t\n"] {
+        crate::env::set_var("JCODE_FIREWORKS_API_BASE", blank);
+        let resolved = resolve_openai_compatible_profile(FIREWORKS_PROFILE);
+        assert_eq!(resolved.api_base, FIREWORKS_PROFILE.api_base);
+    }
+}
+
+#[test]
+fn opencode_go_api_base_is_unchanged_without_an_override() {
+    let _lock = crate::storage::lock_test_env();
+    let _guard = EnvGuard::save(&["JCODE_HOME", "JCODE_OPENCODE_GO_API_BASE"]);
+    let home = tempfile::tempdir().expect("temporary JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+    crate::env::remove_var("JCODE_OPENCODE_GO_API_BASE");
+
+    let resolved = resolve_openai_compatible_profile(OPENCODE_GO_PROFILE);
+
+    assert_eq!(resolved.api_base, OPENCODE_GO_PROFILE.api_base);
+    assert_eq!(resolved.api_base, "https://opencode.ai/zen/go/v1");
+}

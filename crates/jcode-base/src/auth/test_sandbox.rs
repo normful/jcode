@@ -148,6 +148,11 @@ fn tracked_env_vars() -> Vec<String> {
 
     for profile in openai_compatible_profiles() {
         keys.insert(profile.api_key_env.to_string());
+        // Derived base-URL override names, so an ambient override cannot leak
+        // into a sandboxed auth test.
+        if let Some(name) = crate::provider_catalog::api_base_override_env_name(profile.id) {
+            keys.insert(name);
+        }
     }
 
     let mut keys = keys.into_iter().collect::<Vec<_>>();
