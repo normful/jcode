@@ -38,6 +38,7 @@ mod memory;
 mod name_suggestions;
 mod open;
 mod panel;
+mod parallel;
 mod patch;
 mod read;
 mod replace;

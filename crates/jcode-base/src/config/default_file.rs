@@ -320,32 +320,17 @@ kv_cache_miss_notices = true
 update_channel = "stable"
 
 [websearch]
-# Use the model provider's own server-side search (Anthropic web_search on the
-# first-party API, OpenAI Responses web_search) whenever the active
-# provider/model supports it. Searches then run on the provider's side, so they
-# work on servers where DuckDuckGo/Bing scraping is blocked and need no extra
-# key. Providers without native search use the local engines below.
-# Anthropic API keys are billed about $10 per 1,000 searches.
+# Local web search and page fetching run through the Parallel Search and
+# Extract APIs, so there are no engine or endpoint knobs left to set here. The
+# key is env-only: export PARALLEL_API_KEY in the daemon's environment. The
+# daemon reads process env at spawn, so changing the key needs a restart.
+#
+# The option below configures *provider-native* server-side search instead
+# (Anthropic web_search on the first-party API, OpenAI Responses web_search).
+# Searches then run on the provider's side and need no extra key, at roughly
+# $10 per 1,000 searches on Anthropic API keys. Set prefer_native = false to
+# always use the local Parallel-backed tool.
 prefer_native = true
-# Local websearch engine: "duckduckgo", "bing", "searxng", "custom", or "native"
-# ("native" forces prefer_native on and otherwise runs fallback_engines).
-engine = "duckduckgo"
-# Keyless HTML engines to try if the preferred engine fails. Default falls back to Bing HTML.
-fallback_engines = ["bing"]
-# Bring your own Bing Search API key for primary Bing searches. Prefer using an env var.
-# Fallback Bing searches intentionally use keyless HTML search.
-# bing_api_key_env = "JCODE_BING_API_KEY"
-# bing_api_key = ""
-# Bing market/region, for example "en-US" or "zh-CN".
-bing_market = "en-US"
-# SearXNG instance for the "searxng" engine. On some hosts (commonly Linux),
-# DuckDuckGo and Bing block scraped requests via TLS fingerprinting / IP
-# reputation and return an anti-bot page with no results. Pointing at a SearXNG
-# instance (self-hosted or trusted public) with the JSON format enabled avoids
-# this. Configure here or via the JCODE_SEARXNG_URL environment variable, then
-# set engine = "searxng" or add it to fallback_engines.
-# searxng_url = "https://searx.example.org"
-# Native search options (prefer_native):
 # Max provider searches per request (Anthropic only). Caps spend. 0 = no cap.
 # native_max_uses = 5
 # Restrict results to these domains (Anthropic and OpenAI), or block domains
@@ -355,23 +340,6 @@ bing_market = "en-US"
 # Anthropic tool version. "web_search_20260209" and newer are sent with
 # allowed_callers = ["direct"].
 # native_anthropic_tool_version = "web_search_20250305"
-
-# Custom HTTP JSON search: set engine = "custom" and prefer_native = false above.
-# Set fallback_engines = [] above if private queries must not reach Bing on failure.
-# See docs/custom-web-search.md for GET/POST, authentication and JSON pointers.
-# [websearch.custom]
-# endpoint = "https://search.example.org/api"
-# method = "GET"
-# query_param = "q"
-# count_param = "count" # optional; omit to send no count parameter
-# params = { format = "json" }
-# headers = { Accept = "application/json" }
-# header_env = { Authorization = "SEARCH_AUTH" } # complete value, e.g. Bearer ...
-# results_pointer = "/results"
-# title_pointer = "/title"
-# url_pointer = "/url"
-# snippet_pointer = "/snippet"
-
 [tools]
 # Controls which built-in tools are sent to the model.
 # Profiles: "full" (default), "acp", "minimal"/"lite", or "none".
@@ -836,6 +804,36 @@ mod tests {
             config.display.reasoning_display(),
             ReasoningDisplayMode::Full,
             "the shipped user config must keep the full reasoning trace visible"
+        );
+    }
+
+    /// The Parallel migration deleted the scraping engines, so the template
+    /// must not advertise engine knobs that no longer exist, and must still
+    /// document the provider-native knobs that do.
+    #[test]
+    fn default_config_template_drops_local_websearch_engines() {
+        let template = Config::default_config_file_contents();
+        for stale in [
+            "fallback_engines",
+            "searxng",
+            "bing_api_key",
+            "bing_market",
+            "JCODE_BING_API_KEY",
+            "JCODE_SEARXNG_URL",
+            "websearch.custom",
+        ] {
+            assert!(
+                !template.contains(stale),
+                "template still advertises removed websearch setting `{stale}`"
+            );
+        }
+        assert!(
+            template.contains("prefer_native"),
+            "template should still document provider-native search"
+        );
+        assert!(
+            template.contains("PARALLEL_API_KEY"),
+            "template should point at the env var local search needs"
         );
     }
 

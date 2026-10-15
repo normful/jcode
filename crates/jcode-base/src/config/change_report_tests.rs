@@ -117,7 +117,7 @@ fn commonly_edited_sections_are_live() {
         "provider.openai_reasoning_effort",
         "agents.swarm_spawn_mode",
         "tools.profile",
-        "websearch.engine",
+        "websearch.prefer_native",
         "notifications.enabled",
     ] {
         assert_eq!(

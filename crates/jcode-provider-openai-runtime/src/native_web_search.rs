@@ -1,4 +1,4 @@
-//! OpenAI Responses hosted `web_search` tool (`websearch.engine = "native"`).
+//! OpenAI Responses hosted `web_search` tool (`websearch.prefer_native`).
 //!
 //! When enabled, the request carries the hosted `web_search` tool instead of
 //! jcode's local `websearch` tool, so searches run on OpenAI's side. The
@@ -109,14 +109,12 @@ pub(crate) fn without_local_websearch<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jcode_base::config::WebSearchEngine;
     use jcode_message_types::provider_native::LOCAL_WEBSEARCH_DESCRIPTION;
 
+    /// `prefer_native` is true by default, which is what enables the hosted
+    /// tool where the provider supports it.
     fn native_config() -> WebSearchConfig {
-        WebSearchConfig {
-            engine: WebSearchEngine::Native,
-            ..WebSearchConfig::default()
-        }
+        WebSearchConfig::default()
     }
 
     #[test]

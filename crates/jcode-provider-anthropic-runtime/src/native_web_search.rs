@@ -1,4 +1,4 @@
-//! Anthropic server-side `web_search` tool (`websearch.engine = "native"`).
+//! Anthropic server-side `web_search` tool (`websearch.prefer_native`).
 //!
 //! When enabled, the request carries Anthropic's server tool instead of jcode's
 //! local `websearch` tool, so searches run on Anthropic's side. The resulting
@@ -167,13 +167,11 @@ pub(crate) fn server_block_start(data: &str) -> ServerBlockStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jcode_base::config::WebSearchEngine;
 
+    /// `prefer_native` is true by default, which is what enables the server
+    /// tool where the provider supports it.
     fn native_config() -> WebSearchConfig {
-        WebSearchConfig {
-            engine: WebSearchEngine::Native,
-            ..WebSearchConfig::default()
-        }
+        WebSearchConfig::default()
     }
 
     #[test]
@@ -211,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn server_tool_only_for_native_engine_on_first_party_api() {
+    fn server_tool_only_when_native_preferred_on_first_party_api() {
         let off = WebSearchConfig {
             prefer_native: false,
             ..WebSearchConfig::default()
@@ -222,8 +220,8 @@ mod tests {
             server_tools_with_config(&WebSearchConfig::default(), true).len(),
             1
         );
+        // Gateways and other non-first-party bases do not implement it.
         assert!(server_tools_with_config(&native_config(), false).is_empty());
-        assert_eq!(server_tools_with_config(&native_config(), true).len(), 1);
     }
 
     #[test]

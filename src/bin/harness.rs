@@ -163,12 +163,15 @@ async fn main() -> Result<()> {
         cases.push(ToolCase {
             name: "webfetch",
             label: "webfetch example.com",
-            input: json!({"url": "https://example.com", "format": "text"}),
+            input: json!({"urls": ["https://example.com", "https://example.org"],
+                "objective": "Summarize the example domains"}),
         });
         cases.push(ToolCase {
             name: "websearch",
             label: "websearch rust async",
-            input: json!({"query": "rust async await"}),
+            input: json!({"objective": "rust async await",
+                "search_queries": ["rust async await", "rust tokio tutorial"],
+                "max_results": 5}),
         });
     }
 
